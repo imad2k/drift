@@ -21,22 +21,22 @@ eod_api = APIClient(api_key=EOD_API_KEY)
 # This function will get all the relevant fundamental data for a given ticker
 def get_fundamentals_data(ticker):
     data = eod_api.get_fundamentals_data(ticker)
-    # company_code = data['General']['Code']
+    company_code = data['General']['Code']
     company_name = data['General']['Name']
-    # company_sector = data['General']['Sector']   
+    company_sector = data['General']['Sector']   
     highlights = data["Highlights"]
-    # valuation = data["Valuation"]
+    valuation = data["Valuation"]
     technicals = data["Technicals"]
-    # earnings_trend = data["Earnings"]["Trend"]
+    earnings_trend = data["Earnings"]["Trend"]
     financials = data["Financials"]
     return json.dumps({
-        # 'Code': company_code,
+        'Code': company_code,
         'Name': company_name,
-        # 'Sector': company_sector,
+        'Sector': company_sector,
         'Highlights': highlights,
-        # 'Valuation': valuation,
+        'Valuation': valuation,
         'Technicals': technicals,
-        # 'Earnings_trend': earnings_trend,
+        'Earnings_trend': earnings_trend,
         'Financials': financials
     })
     
