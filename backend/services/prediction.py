@@ -1,263 +1,196 @@
 import os
 import json
-import pandas as pd
 import numpy as np
-
+import pandas as pd
 from datetime import datetime
-from pprint import pprint
-
+from dotenv import load_dotenv
 
 from openai import OpenAI
-from dotenv import load_dotenv
-from data_ingestion import get_fundamentals_data, get_historical_data
-
-
-
-# Scikit-learn models and tools
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import mean_squared_error
-
-# XGBoost
 from xgboost import XGBRegressor
 
+# Adjust these imports to match your actual file structure
+from data_ingestion import get_daily_data, get_intraday_data
 
-# ------------------------------------------------------------------
-# 1) ENVIRONMENT SETUP
-# ------------------------------------------------------------------
+
+# Load environment variables
 load_dotenv()
-
 EOD_API_KEY = os.getenv('EOD_API_KEY')
-if EOD_API_KEY is None:
-    raise ValueError("EOD_API_KEY is not set in environment variables")
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-OpenAI_API_KEY = os.getenv('OPENAI_API_KEY')
-if OpenAI_API_KEY is None:
-    raise ValueError("OpenAI_API_KEY is not set in environment variables")
+if not EOD_API_KEY:
+    raise ValueError("EOD_API_KEY is not set in environment variables.")
 
-openai = OpenAI(api_key=OpenAI_API_KEY)
 
-# ------------------------------------------------------------------
-# 2) HELPER FUNCTION: Train and Evaluate a Single Model w/ TSCV
-# ------------------------------------------------------------------
-def train_and_evaluate_ts(model, X, y, n_splits=3):
+def aggregate_intraday(intraday_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Performs time-series split (walk-forward) cross-validation on the given model.
-    Returns the mean MSE across all splits, and leaves the model trained
-    on the entire dataset at the end.
-    
-    Parameters:
-    -----------
-    model : regressor instance (e.g., RandomForestRegressor)
-    X, y  : full dataset features and targets (same length)
-    n_splits : how many splits for TimeSeriesSplit
-    
-    Returns:
-    --------
-    avg_mse : float
-        Average MSE across all splits
+    Convert intraday bars (datetime, OHLC, volume) into daily-level stats.
+    Example: mean intraday volume, mean high, mean low, mean close.
     """
-    tscv = TimeSeriesSplit(n_splits=n_splits)
-    mses = []
+    # Parse the 'datetime' column
+    intraday_df["datetime"] = pd.to_datetime(intraday_df["datetime"], errors="coerce")
+    intraday_df.dropna(subset=["datetime"], inplace=True)
 
-    # Walk-forward validation
-    for train_index, val_index in tscv.split(X):
-        X_train, X_val = X.iloc[train_index], X.iloc[val_index]
-        y_train, y_val = y.iloc[train_index], y.iloc[val_index]
+    # Group by date_only
+    intraday_df["date_only"] = intraday_df["datetime"].dt.date
+    grouped = intraday_df.groupby("date_only")
 
-        model.fit(X_train, y_train)
-        preds = model.predict(X_val)
-        mse = mean_squared_error(y_val, preds)
-        mses.append(mse)
+    # Aggregate
+    agg_df = grouped.agg({
+        'volume': 'mean',
+        'high': 'mean',
+        'low': 'mean',
+        'close': 'mean'
+    }).reset_index()
 
-    # Final training on full data
-    model.fit(X, y)
-    avg_mse = np.mean(mses)
-    return avg_mse
+    # Rename
+    agg_df.rename(columns={
+        'volume': 'intraday_vol_mean',
+        'high': 'intraday_high_mean',
+        'low': 'intraday_low_mean',
+        'close': 'intraday_close_mean',
+        'date_only': 'intraday_date'
+    }, inplace=True)
 
-# ------------------------------------------------------------------
-# 3) MAIN PREDICTION FUNCTION
-# ------------------------------------------------------------------
-def predict_next_close(ticker, start_date, end_date):
+    return agg_df
+
+
+def predict_next_close(ticker: str, start_date: str, end_date: str, intraday_interval: str = "1h") -> str:
     """
-    1. Fetch and parse historical + fundamental data.
-    2. Incorporate advanced feature engineering (lagged prices, returns, fundamentals).
-    3. Use time-series cross-validation to evaluate each model's performance.
-    4. Create a weighted ensemble of RandomForest, GradientBoosting, XGBoost based on MSE.
-    5. Predict next day's close using the ensemble.
-    6. (Optional) Provide a textual summary via OpenAI.
+    1. Fetch daily data & intraday data for the given ticker & date range.
+    2. Aggregate intraday to daily-level features; merge with daily.
+    3. Shift next-day close as 'target'; train RandomForest, GradientBoosting, XGBoost.
+    4. Predict final test sample's next close.
+    5. Generate a textual explanation via OpenAI (if OPENAI_API_KEY is set).
+    6. Return ONLY the textual explanation (or fallback string if something fails).
     """
 
-    # -------------------------
-    # A) GET HISTORICAL DATA
-    # -------------------------
-    historical_data_json = get_historical_data(ticker, start_date, end_date, EOD_API_KEY)
-    historical_data = json.loads(historical_data_json)
-    
-    df = pd.DataFrame(historical_data)
-    if df.empty:
-        raise ValueError("No historical data returned for this ticker/date range.")
+    # 1) Fetch daily data
+    daily_json = get_daily_data(ticker, start_date, end_date, EOD_API_KEY)
+    daily_data = json.loads(daily_json)
+    df_daily = pd.DataFrame(daily_data)
 
-    # Ensure correct typing
-    df["date"] = pd.to_datetime(df["date"])
-    df.sort_values("date", inplace=True)
-    df.reset_index(drop=True, inplace=True)
+    if df_daily.empty:
+        return "No daily data found for this date range."
 
-    # Basic check
-    if len(df) < 30:
-        raise ValueError("Not enough historical data to perform robust modeling.")
+    # Clean daily data
+    df_daily["date"] = pd.to_datetime(df_daily["date"], errors="coerce")
+    df_daily.dropna(subset=["date"], inplace=True)
+    df_daily.sort_values("date", inplace=True)
+    df_daily.reset_index(drop=True, inplace=True)
 
-    # -------------------------
-    # B) GET FUNDAMENTALS & PARSE
-    # -------------------------
-    fundamental_data_json = get_fundamentals_data(ticker)
-    fundamental_data = json.loads(fundamental_data_json)
+    # 2) Fetch intraday data & merge
+    intraday_json = get_intraday_data(ticker, start_date, end_date, intraday_interval, EOD_API_KEY)
+    intraday_data = json.loads(intraday_json)
+    df_intraday = pd.DataFrame(intraday_data)
 
-    # Extract some numeric fields. Adjust as needed:
-    highlights = fundamental_data.get("Highlights", {})
-    valuation  = fundamental_data.get("Valuation", {})
-    technicals = fundamental_data.get("Technicals", {})
-    
-    market_cap = highlights.get("MarketCapitalization", np.nan)
-    trailing_pe = valuation.get("TrailingPE", np.nan)
-    beta = technicals.get("Beta", np.nan)
+    if not df_intraday.empty:
+        df_agg = aggregate_intraday(df_intraday)
+        df_agg["intraday_date"] = pd.to_datetime(df_agg["intraday_date"])
+        df_daily["daily_date_only"] = df_daily["date"].dt.date
+        df_agg["agg_date_only"] = df_agg["intraday_date"].dt.date
 
-    # If you have quarterly or yearly data, you'd merge them time-wise,
-    # but here's a single snapshot approach (same fundamental for all rows):
-    df["market_cap"] = market_cap
-    df["trailing_pe"] = trailing_pe
-    df["beta"] = beta
+        df_merged = pd.merge(
+            df_daily,
+            df_agg,
+            how="left",
+            left_on="daily_date_only",
+            right_on="agg_date_only",
+            suffixes=("", "_intraday")
+        )
+        df_merged.drop(columns=["daily_date_only", "agg_date_only"], errors="ignore", inplace=True)
+    else:
+        # If intraday is empty, still proceed with daily data
+        df_merged = df_daily.copy()
+        df_merged["intraday_vol_mean"] = np.nan
+        df_merged["intraday_high_mean"] = np.nan
+        df_merged["intraday_low_mean"] = np.nan
+        df_merged["intraday_close_mean"] = np.nan
 
-    # One-hot or numeric encode sector (optional)
-    sector = fundamental_data.get("Sector", "Unknown")
-    df["sector_code"] = pd.Categorical([sector]*len(df)).codes
+    # Fill intraday columns with 0 to avoid NaNs for GradientBoosting
+    fill_cols = ["intraday_vol_mean", "intraday_high_mean", "intraday_low_mean", "intraday_close_mean"]
+    for col in fill_cols:
+        if col in df_merged.columns:
+            df_merged[col] = df_merged[col].fillna(0)  # direct assignment to avoid chained assignment
 
-    # -------------------------
-    # C) ADVANCED FEATURE ENGINEERING
-    # -------------------------
+    # 3) Shift next-day close as target
+    df_merged["target"] = df_merged["close"].shift(-1)
+    df_merged.dropna(subset=["target"], inplace=True)
+    df_merged.reset_index(drop=True, inplace=True)
 
-    # 1) SHIFT the target: next day close as "target"
-    #    We'll drop the last row after shifting to avoid NaN target
-    df["target"] = df["close"].shift(-1)
-
-    # 2) Basic lag features
-    df["lag1_close"] = df["close"].shift(1)
-    df["lag2_close"] = df["close"].shift(2)
-
-    # 3) Returns: close-to-close % change
-    df["returns"] = df["close"].pct_change()  # This row's daily return
-    df["lag1_returns"] = df["returns"].shift(1)
-    df["lag2_returns"] = df["returns"].shift(2)
-
-    # 4) Drop any resulting NaNs
-    df.dropna(inplace=True)
-    df.reset_index(drop=True, inplace=True)
-
-    # Features we'll use:
+    # Features
     feature_cols = [
         "open", "high", "low", "close", "volume",
-        "market_cap", "trailing_pe", "beta", "sector_code",
-        "lag1_close", "lag2_close",
-        "returns", "lag1_returns", "lag2_returns"
+        "intraday_vol_mean", "intraday_high_mean",
+        "intraday_low_mean", "intraday_close_mean"
     ]
+    feature_cols = [c for c in feature_cols if c in df_merged.columns]
 
-    X = df[feature_cols]
-    y = df["target"]
+    X = df_merged[feature_cols]
+    y = df_merged["target"]
 
-    # We want to do a final day prediction. The last row in df is "today",
-    # and we want to predict "tomorrow." We'll separate that out:
-    # We'll train on everything except the last row. The last row is for inference.
-    X_for_prediction = X.iloc[[-1]].copy()
-    X_train_full = X.iloc[:-1]
-    y_train_full = y.iloc[:-1]
+    # Train/test split
+    data_len = len(df_merged)
+    split_index = int(data_len * 0.8)
+    if split_index < 1:
+        return "Not enough data to perform a train/test split."
 
-    # -------------------------
-    # D) TIME-SERIES SPLIT & MODEL TRAINING
-    #    We'll do walk-forward cross-validation for each model,
-    #    then do Weighted Ensemble based on inverse MSE.
-    # -------------------------
-    models = {
-        "rf": RandomForestRegressor(n_estimators=50, random_state=42),
-        "gbm": GradientBoostingRegressor(n_estimators=50, random_state=42),
-        "xgb": XGBRegressor(n_estimators=50, random_state=42)
-    }
+    X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
+    y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
 
-    mse_scores = {}
-    for name, model in models.items():
-        avg_mse = train_and_evaluate_ts(model, X_train_full, y_train_full, n_splits=3)
-        mse_scores[name] = avg_mse
-    
-    # Weighted Ensemble: weight = 1 / MSE
-    weights = {}
-    for name in models:
-        weights[name] = 1.0 / mse_scores[name] if mse_scores[name] != 0 else 1.0
+    if X_train.empty or X_test.empty:
+        return "Training or testing data is empty. Check your date range or data coverage."
 
-    total_weight = sum(weights.values())
+    # 4) Train 3 ensemble models
+    rf = RandomForestRegressor(random_state=42)
+    gbm = GradientBoostingRegressor(random_state=42)
+    xgb = XGBRegressor(random_state=42)
 
-    # Final training set -> each model is *already trained* on full data
-    # after calling train_and_evaluate_ts, but let's confirm we re-fit just to be safe:
-    for name, model in models.items():
-        model.fit(X_train_full, y_train_full)
+    rf.fit(X_train, y_train)
+    gbm.fit(X_train, y_train)
+    xgb.fit(X_train, y_train)
 
-    # Make predictions for the last row
-    preds = {}
-    for name, model in models.items():
-        preds[name] = model.predict(X_for_prediction)[0]
+    rf_pred = rf.predict(X_test)
+    gbm_pred = gbm.predict(X_test)
+    xgb_pred = xgb.predict(X_test)
 
-    # Weighted average
-    ensemble_prediction = 0.0
-    for name, pred_val in preds.items():
-        ensemble_prediction += (pred_val * (weights[name] / total_weight))
+    if len(rf_pred) == 0:
+        return "No predictions available from the test set."
 
-    # -------------------------
-    # E) OPTIONAL: CREATE A TEXTUAL SUMMARY WITH OpenAI
-    # -------------------------
-    summary_prompt = (
-        f"Based on time-series cross-validation and a weighted ensemble of RF, GBM, and XGB, "
-        f"the predicted next closing price for {ticker} is {ensemble_prediction:.2f}. "
-        "Give a concise explanation of how this estimate was derived."
-    )
+    # We'll pick the last row in the test set as the "next day"
+    final_prediction = np.mean([rf_pred[-1], gbm_pred[-1], xgb_pred[-1]])
+
+    # 5) Generate textual explanation (OpenAI) or fallback message
+    if not OPENAI_API_KEY:
+        return f"Predicted next close: {final_prediction:.2f} (No OpenAI key provided)."
 
     try:
-        # "o1" is your custom model. If not available, try "gpt-3.5-turbo" or similar.
-        response = openai.chat.completions.create(
-            model="o1",
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        prompt = (
+            f"Based on historical daily and intraday data from {start_date} to {end_date}, "
+            f"the predicted next closing price for {ticker} is {final_prediction:.2f}. "
+            "Provide a short, concise explanation, limited to a few sentences."
+        )
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a concise financial assistant."},
-                {"role": "user", "content": summary_prompt}
+                {"role": "user", "content": prompt}
             ]
         )
-        textual_explanation = response.choices[0].message.content
+        explanation = response.choices[0].message.content
+        return explanation
+
     except Exception as e:
-        textual_explanation = (
-            f"OpenAI summary request failed: {e}\n"
-            f"Prediction is {ensemble_prediction:.2f}."
-        )
-
-    # -------------------------
-    # F) PRINT + RETURN RESULTS
-    # -------------------------
-    results = {
-        "ticker": ticker,
-        "start_date": start_date,
-        "end_date": end_date,
-        "ensemble_prediction": ensemble_prediction,
-        "mse_scores": mse_scores,
-        "weights": weights,
-        "raw_model_preds": preds,
-        "explanation": textual_explanation
-    }
-
-    pprint(results)
-    return results
+        return f"OpenAI request failed: {e}"
 
 
-# -------------------------
-# G) DRIVER CODE (INTERACTIVE)
-# -------------------------
 if __name__ == "__main__":
-    ticker = input("Enter the ticker: ")
+    ticker = input("Enter the ticker symbol (e.g., 'AAPL.US'): ")
     start_date = input("Enter the start date (YYYY-MM-DD): ")
     end_date = input("Enter the end date (YYYY-MM-DD): ")
+    interval = input("Enter intraday interval (e.g., '5m', '15m', '1h'): ")
 
-    predict_next_close(ticker, start_date, end_date)
+    # Run the pipeline and print the final OpenAI explanation (or fallback string)
+    final_explanation = predict_next_close(ticker, start_date, end_date, intraday_interval=interval)
+    print(final_explanation)
