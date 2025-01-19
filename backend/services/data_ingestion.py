@@ -47,6 +47,12 @@ def get_historical_data(ticker, start_date, end_date, EOD_API_KEY):
     historical_data = response.json()  # Parse the JSON content
     return json.dumps(historical_data, indent=2)  # Convert to JSON string
     
+    
+# def get_macro_data():
+#     data = eod_api.get_macro_indicators_data (
+#         country = "USA", 
+#         indicator = "real_interest_rate",
+#         real_interest_rate)
    
 # Example usage
 # historical_data_json = get_historical_data('AAPL', '2025-01-01', '2025-01-04', EOD_API_KEY)
