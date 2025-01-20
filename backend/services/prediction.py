@@ -126,7 +126,7 @@ def predict_next_close(ticker, start_date, end_date, intraday_interval):
 
     # Note: Adjust to your needs. Also ensure you have your OpenAI API key.
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completion.create(
             model="o1",
             messages=[
                 {"role": "system", "content": "You are a concise financial assistant."},
