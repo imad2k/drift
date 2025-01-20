@@ -1,0 +1,9 @@
+flask
+pandas
+numpy
+requests
+pg8000
+scikit-learn
+xgboost
+gunicorn
+python-dotenv
