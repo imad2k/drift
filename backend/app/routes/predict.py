@@ -4,7 +4,7 @@ import os
 import json
 import pandas as pd
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from dotenv import load_dotenv
 
 # We must import "time" because the get_intraday_data function uses time.mktime
@@ -54,7 +54,22 @@ RDS_PORT = int(os.getenv('RDS_PORT', 5432))
 RDS_USER = os.getenv('RDS_USER')
 RDS_PASSWORD = os.getenv('RDS_PASSWORD')
 
-predict_bp = Blueprint("predict_bp", __name__)
+predict_bp = Blueprint('predict', __name__)
+
+@predict_bp.route('/predict', methods=['POST'])
+def predict():
+    try:
+        data = request.get_json()
+        current_app.logger.info(f"Received data: {data}")
+
+        # Add your prediction logic here
+        # Example response
+        response = {"message": "Prediction received", "data": data}
+        current_app.logger.info(f"Response: {response}")
+        return jsonify(response)
+    except Exception as e:
+        current_app.logger.error(f"Error during prediction: {e}", exc_info=True)
+        return jsonify({"error": "Internal Server Error"}), 500
 
 @predict_bp.route("/predict", methods=["POST"])
 def predict_next_close():
