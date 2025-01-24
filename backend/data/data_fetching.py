@@ -1,3 +1,4 @@
+# stock_prediction_app/data/data_fetching.py
 import os
 import requests
 import pandas as pd
@@ -5,6 +6,7 @@ import numpy as np
 import json
 import time
 from datetime import datetime
+import re
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -21,15 +23,45 @@ RDS_PASSWORD = os.getenv('RDS_PASSWORD')
 
 def fetch_fundamental_data(ticker, api_token):
     """
-    Fetch fundamental data for the given ticker from EODHD.
+    Fetch raw fundamentals JSON from EODHD for `ticker`, then fix any occurrences 
+    of '}}SomeWord:{' -> '}}, "SomeWord": {' or variations with extra spaces. 
+    Finally, return a Python dictionary (or {} if still invalid).
     """
     url = f"https://eodhd.com/api/fundamentals/{ticker}?api_token={api_token}&fmt=json"
+    print(f"Requesting URL: {url}")
     response = requests.get(url)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Failed to fetch fundamental data for {ticker}. Status code: {response.status_code}")
+
+    if response.status_code != 200:
+        print(f"HTTP Error: {response.status_code} - {response.reason}")
         return {}
+
+    # 1) Get the raw text
+    raw_text = response.text
+    print("DEBUG: Raw fundamentals length =", len(raw_text))
+    # (Optional) print a snippet to see if it's obviously malformed
+    print("DEBUG: Raw fundamentals snippet:")
+    # print(raw_text[:1000])  # first 1000 chars
+
+    # 2) Regex to fix known patterns like '}}Word:{' (with possible spaces)
+    # This pattern finds:
+    pattern = r'(\}\})\s*([A-Za-z0-9_]+)\s*:\s*\{'
+    replacement = r'}}, "\2": {'
+    fixed_text = re.sub(pattern, replacement, raw_text)
+
+    # Possibly, there could be multiple weird spots; re.sub fixes them all at once
+
+    # 3) Attempt to parse
+    try:
+        data = json.loads(fixed_text)
+        print("DEBUG: JSON successfully parsed after fix!")
+        return data
+    except json.JSONDecodeError as e:
+        print("ERROR: Still invalid JSON after fix. JSONDecodeError details:")
+        print(e)
+        # Return an empty dict if we can't parse
+        return {}
+    
+    
 
 def fetch_news_sentiment(tickers, start_date, end_date):
     """
@@ -42,64 +74,18 @@ def fetch_news_sentiment(tickers, start_date, end_date):
            f"&api_token={EOD_API_KEY}&fmt=json")
     response = requests.get(url)
     
-    print(f"Fetching news sentiment for tickers: {tickers}")
-    print(f"URL: {url}")
-    print(f"Response Status Code: {response.status_code}")
-    
     if response.status_code != 200:
         print(f"Failed to fetch news sentiment: {response.text}")
         return {}
-    
-    sentiment_data = response.json()
-    
-    # Convert response to a usable DataFrame format
-    sentiment_dfs = {}
-    for ticker, data in sentiment_data.items():
-        df = pd.DataFrame(data)
-        df["ticker"] = ticker
-        sentiment_dfs[ticker] = df
-    
-    # Concatenate all ticker data
-    if sentiment_dfs:
-        return pd.concat(sentiment_dfs.values(), ignore_index=True)
-    else:
-        return pd.DataFrame()
+    return response.json()
 
-def fetch_economic_events(start_date, end_date, country="USA"):
+def fetch_economic_events(api_token, from_date, to_date, country="USA", limit=1000, offset=0):
     """
-    Fetch economic events from EODHD for the given date range and country.
+    Fetch economic events data from EODHD.
     """
-    EOD_API_KEY = os.getenv('EOD_API_KEY')
-    url = "https://eodhd.com/api/economic-events"
-    params = {
-        "api_token": EOD_API_KEY,
-        "from": start_date,
-        "to": end_date,
-        "country": country,
-        "limit": 1000,
-        "offset": 0
-    }
-    response = requests.get(url, params=params)
-    print(f"Fetching economic events data: {response.url}")
-    
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Error fetching economic events data: {response.text}")
-        return []
-
-def fetch_macroeconomic_data():
-    """
-    Fetch macroeconomic data (example: UK10Y.GBOND from EODHD).
-    """
-    EOD_API_KEY = os.getenv('EOD_API_KEY')
-    url = f"https://eodhd.com/api/eod/UK10Y.GBOND?api_token={EOD_API_KEY}&fmt=json"
+    url = (f"https://eodhd.com/api/economic-events?api_token={api_token}"
+           f"&from={from_date}&to={to_date}&country={country}&limit={limit}&offset={offset}")
     response = requests.get(url)
-    
-    print(f"URL: {url}")
-    print(f"Response Status Code: {response.status_code}")
-    print(f"Response Text: {response.text}")
-    print(f"Response Headers: {response.headers}")
     
     if response.status_code == 200:
         try:
@@ -124,18 +110,39 @@ def get_intraday_data(ticker, start_date, end_date, interval, EOD_API_KEY):
     
     response = requests.get(url)
     
-    # Debugging: Print response details for troubleshooting
-    print(f"Fetching intraday data for {ticker}")
-    print(f"URL: {url}")
-    print(f"Response Status Code: {response.status_code}")
-    print(f"Response Text: {response.text}")
-    
     if response.status_code == 200:
         try:
-            return response.json()  # Parse and return JSON data
+            data = response.json()
+            if not data:
+                print(f"No data returned for {ticker}")
+            return data  # Parse and return JSON data
         except json.JSONDecodeError as e:
             print(f"JSON decoding error for {ticker}: {e}")
             return []
     else:
         print(f"Error fetching intraday data for {ticker}: {response.text}")
         return []
+    
+    
+def fetch_macroeconomic_data():
+    """
+    Fetch macroeconomic data (example: UK10Y.GBOND from EODHD).
+    """
+    EOD_API_KEY = os.getenv('EOD_API_KEY')
+    url = f"https://eodhd.com/api/eod/UK10Y.GBOND?api_token={EOD_API_KEY}&fmt=json"
+    response = requests.get(url)
+    
+    print(f"URL: {url}")
+    print(f"Response Status Code: {response.status_code}")
+    print(f"Response Text: {response.text}")
+    print(f"Response Headers: {response.headers}")
+    
+    if response.status_code == 200:
+        try:
+            return response.json()
+        except json.JSONDecodeError:
+            print("Error: Response is not valid JSON.")
+            return {}
+    else:
+        print(f"Error: Failed to fetch data. Status Code: {response.status_code}, Response: {response.text}")
+        return {}

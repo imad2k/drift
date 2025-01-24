@@ -1,7 +1,8 @@
-# stock_prediction_app/processing/data_processing.py
+# stock_prediction_app/data/data_processing.py
 
 import pandas as pd
 import numpy as np
+import re
 
 def process_external_data(fundamental_data, news_sentiment, economic_events, macroeconomic_data):
     """
@@ -84,25 +85,39 @@ def aggregate_intraday(intraday_df):
     return grouped
 
 
-def process_fundamental_data(fundamental_data):
+def process_fundamental_data(fundamental_json):
     """
-    Processes fundamental data into a single-row DataFrame. 
-    Kept exactly from your script.
+    Process the fundamental data JSON into a DataFrame.
+    Uses debug prints to show sections of data.
     """
-    if not fundamental_data:
-        return pd.DataFrame()
+    import json
 
     try:
-        highlights = fundamental_data.get("Highlights", {})
-        valuation = fundamental_data.get("Valuation", {})
-        shares_stats = fundamental_data.get("SharesStats", {})
-        technicals = fundamental_data.get("Technicals", {})
-        splits_dividends = fundamental_data.get("SplitsDividends", {})
-        esg_scores = fundamental_data.get("ESGScores", {})
-        earnings = fundamental_data.get("Earnings", {}).get("History", [])
-        financials = fundamental_data.get("Financials", {})
+        # Debugging: Print the structure of the JSON data
+        print("\n--- process_fundamental_data Debug ---")
+        print("Fundamental JSON structure (final):")
+        print(json.dumps(fundamental_json, indent=2))
+        
+        highlights = fundamental_json.get("Highlights", {})
+        valuation = fundamental_json.get("Valuation", {})
+        shares_stats = fundamental_json.get("SharesStats", {})
+        technicals = fundamental_json.get("Technicals", {})
+        splits_dividends = fundamental_json.get("SplitsDividends", {})
+        esg_scores = fundamental_json.get("ESGScores", {})
+        earnings = fundamental_json.get("Earnings", {}).get("History", [])
+        financials = fundamental_json.get("Financials", {})
 
-        processed_data = {
+        # Debug: Print the contents of each section
+        print("Highlights:", json.dumps(highlights, indent=2))
+        print("Valuation:", json.dumps(valuation, indent=2))
+        print("Shares Stats:", json.dumps(shares_stats, indent=2))
+        print("Technicals:", json.dumps(technicals, indent=2))
+        print("Splits and Dividends:", json.dumps(splits_dividends, indent=2))
+        print("ESG Scores:", json.dumps(esg_scores, indent=2))
+        print("Earnings:", json.dumps(earnings, indent=2))
+        print("Financials:", json.dumps(financials, indent=2))
+
+        combined_data = {
             # General Information
             "market_cap": highlights.get("MarketCapitalization"),
             "ebitda": highlights.get("EBITDA"),
@@ -147,14 +162,14 @@ def process_fundamental_data(fundamental_data):
             "dividend_payout_ratio": splits_dividends.get("PayoutRatio"),
             "last_dividend_date": splits_dividends.get("LastSplitDate"),
 
-            # ESG Scores (optional)
+            # ESG Scores
             "esg_score": esg_scores.get("Total"),
             "esg_environment_score": esg_scores.get("EnvironmentScore"),
             "esg_social_score": esg_scores.get("SocialScore"),
             "esg_governance_score": esg_scores.get("GovernanceScore"),
 
-            # Latest Earnings Data (optional)
-            "latest_quarter_eps": earnings[0].get("eps") if earnings else None,
+            # Latest Earnings Data
+            "latest_quarter_eps": earnings[0].get("eps") if (isinstance(earnings, list) and len(earnings) > 0 and isinstance(earnings[0], dict)) else None,
 
             # Financial Metrics
             "total_assets": financials.get("Balance_Sheet", {}).get("totalAssets"),
@@ -163,7 +178,14 @@ def process_fundamental_data(fundamental_data):
             "cash_flow_operating": financials.get("Cash_Flow", {}).get("totalCashFromOperatingActivities"),
         }
 
-        return pd.DataFrame([processed_data])
+        # Print combined data
+        print("\nCombined data dictionary:")
+        print(json.dumps(combined_data, indent=2))
+
+        df_fund = pd.DataFrame([combined_data])
+        if df_fund.empty:
+            print("\n>>> Fundamental data DataFrame is empty.\n")
+        return df_fund
 
     except Exception as e:
         print(f"Error processing fundamental data: {e}")

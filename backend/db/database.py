@@ -1,3 +1,4 @@
+# stock_prediction_app/db/database.py
 import os
 import pg8000
 from dotenv import load_dotenv
