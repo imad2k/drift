@@ -1,17 +1,19 @@
 node_modules/
-.env
 
-# Ignore virtual environment
+# Virtual Environment
 venv/
-
-# Ignore other large files
+ENV/
+env/
+.env
 *.so
 *.dylib
-*.dll
-*.exe
-*.bin
-*.lib
-*.a
-*.o
-*.pyc
+backend/venv/
+
+# Python
+*.py[cod]
 __pycache__/
+*.pyd
+*.pyo
+
+# OS
+.DS_Store
