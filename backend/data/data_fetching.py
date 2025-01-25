@@ -28,36 +28,24 @@ def fetch_fundamental_data(ticker, api_token):
     Finally, return a Python dictionary (or {} if still invalid).
     """
     url = f"https://eodhd.com/api/fundamentals/{ticker}?api_token={api_token}&fmt=json"
-    print(f"Requesting URL: {url}")
     response = requests.get(url)
 
     if response.status_code != 200:
-        print(f"HTTP Error: {response.status_code} - {response.reason}")
         return {}
 
     # 1) Get the raw text
     raw_text = response.text
-    print("DEBUG: Raw fundamentals length =", len(raw_text))
-    # (Optional) print a snippet to see if it's obviously malformed
-    print("DEBUG: Raw fundamentals snippet:")
-    # print(raw_text[:1000])  # first 1000 chars
 
     # 2) Regex to fix known patterns like '}}Word:{' (with possible spaces)
-    # This pattern finds:
     pattern = r'(\}\})\s*([A-Za-z0-9_]+)\s*:\s*\{'
     replacement = r'}}, "\2": {'
     fixed_text = re.sub(pattern, replacement, raw_text)
 
-    # Possibly, there could be multiple weird spots; re.sub fixes them all at once
-
     # 3) Attempt to parse
     try:
         data = json.loads(fixed_text)
-        print("DEBUG: JSON successfully parsed after fix!")
         return data
-    except json.JSONDecodeError as e:
-        print("ERROR: Still invalid JSON after fix. JSONDecodeError details:")
-        print(e)
+    except json.JSONDecodeError:
         # Return an empty dict if we can't parse
         return {}
     
