@@ -1,33 +1,47 @@
-annotated-types==0.7.0
-anyio==4.8.0
-certifi==2021.10.8
-charset-normalizer==2.0.10
-click==8.0.3
-contourpy==1.3.1
-cycler==0.12.1
-distro==1.9.0
-eodhd==1.0.32
-exceptiongroup==1.2.2
-Flask==2.0.2
+# Core ML packages
+numpy==1.23.5
+pandas==1.4.4
+scikit-learn==1.1.3
+xgboost==1.7.3
+lightgbm==3.3.5
+catboost==1.2.7
+
+# PyTorch ecosystem
+torch==1.13.1
+torchvision==0.14.1
+torchaudio==0.13.1
+pytorch-lightning==1.9.5
+pytorch-forecasting==0.10.3
+pytorch-optimizer==1.3.1
+
+# Web dependencies
+flask==2.0.2
+werkzeug==2.0.3
 Flask-Cors==3.0.10
-fonttools==4.55.3
+
+# Data and visualization
+matplotlib==3.7.1
+statsmodels==0.13.5
+pg8000
+
+# Utilities and API clients
+python-dotenv==1.0.1
+eodhd==1.0.32
+
+# Additional dependencies
 h11==0.14.0
 httpcore==1.0.7
 httpx==0.28.1
 idna==3.3
 itsdangerous==2.0.1
 Jinja2==3.0.3
-jiter==0.8.2
 joblib==1.4.2
 kiwisolver==1.4.8
 markdown-it-py==3.0.0
 MarkupSafe==2.0.1
-matplotlib==3.10.0
 mdurl==0.1.2
-numpy==2.2.1
 openai==1.59.8
 packaging==24.2
-pandas==2.2.3
 pillow==11.1.0
 psycopg2-binary==2.9.10
 pydantic==2.10.5
@@ -35,11 +49,9 @@ pydantic_core==2.27.2
 Pygments==2.19.1
 pyparsing==3.2.1
 python-dateutil==2.9.0.post0
-python-dotenv==1.0.1
 pytz==2024.2
 requests==2.32.3
 rich==13.9.4
-scikit-learn==1.6.1
 scipy==1.15.1
 six==1.16.0
 sniffio==1.3.1
@@ -51,5 +63,3 @@ tzdata==2024.2
 urllib3==1.26.8
 websocket-client==1.8.0
 websockets==14.1
-Werkzeug==2.0.2
-xgboost==2.1.3

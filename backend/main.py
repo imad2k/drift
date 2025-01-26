@@ -2,8 +2,16 @@ import os
 import logging
 from flask import Flask, jsonify
 from dotenv import load_dotenv
-from app.routes.predict import predict_bp  # Use absolute import
-from db.database import test_db_connection 
+import multiprocessing as mp
+
+# Your existing blueprint import
+from app.routes.predict import predict_bp
+
+# Import the new TFT blueprint (assuming it's in app/routes/train_tft_route.py)
+from app.routes.train_tft_route import tft_bp
+
+# Database connection checker
+from db.database import test_db_connection
 
 load_dotenv()  # Load variables from .env
 
@@ -18,7 +26,8 @@ def index():
     return "Stock Prediction App is Running!"
 
 # Register blueprint(s)
-app.register_blueprint(predict_bp)
+app.register_blueprint(predict_bp)     # The old /predict routes
+app.register_blueprint(tft_bp)         # The new /train_tft route
 
 # Error handler for internal server errors
 @app.errorhandler(500)
@@ -26,7 +35,7 @@ def internal_error(error):
     app.logger.error(f"Server Error: {error}")
     return jsonify({"error": "Internal Server Error"}), 500
 
-#test db connection
+# Test DB connection
 @app.route("/test-db", methods=["GET"])
 def test_db():
     """
@@ -38,7 +47,5 @@ def test_db():
         return jsonify({"error": "DB connection failed"}), 500
 
 if __name__ == "__main__":
-    # Create and run the Flask app
-    port = os.getenv("PORT", 5001)
-    app.run(host="0.0.0.0", port=int(port), debug=True)
-
+    mp.set_start_method("spawn", force=True)
+    app.run(host="127.0.0.1", port=5001, debug=True, use_reloader=False)
