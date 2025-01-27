@@ -16,7 +16,7 @@ RDS_DATABASE = os.getenv('RDS_DATABASE', 'postgres')
 
 def test_db_connection():
     """
-    Simple test to confirm we can connect to the DB.
+    Simple test to confirm DB connectivity.
     """
     try:
         conn = pg8000.connect(
@@ -38,22 +38,22 @@ def test_db_connection():
 
 def save_model_performance(perf_records):
     """
-    Insert one or more model performance records into 'model_performance' table.
-    Returns a list of newly inserted IDs, one per record (assuming usage of RETURNING).
+    Insert one or more model performance records into `model_performance`.
+    Return a list of newly inserted IDs (assuming usage of RETURNING).
     
-    Table schema could be:
-        id SERIAL PK
-        model_name TEXT
-        train_window_start DATE
-        train_window_end DATE
-        r2_score DOUBLE PRECISION
-        mse DOUBLE PRECISION
-        mae DOUBLE PRECISION
-        training_date TIMESTAMP
-        ticker TEXT (optional)
-        horizon TEXT (optional)
-        window_label TEXT (optional)
-        ...
+    The table might have columns:
+      id SERIAL,
+      model_name TEXT,
+      train_window_start DATE,
+      train_window_end DATE,
+      r2_score DOUBLE PRECISION,
+      mse DOUBLE PRECISION,
+      mae DOUBLE PRECISION,
+      training_date TIMESTAMP,
+      ticker TEXT,
+      horizon TEXT,
+      window_label TEXT,
+      data_type TEXT
     """
     if not perf_records:
         return []
@@ -79,9 +79,10 @@ def save_model_performance(perf_records):
                 training_date,
                 ticker,
                 horizon,
-                window_label
+                window_label,
+                data_type
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """
         with conn.cursor() as cur:
@@ -99,6 +100,7 @@ def save_model_performance(perf_records):
                         rec.get("ticker"),
                         rec.get("horizon"),
                         rec.get("window_label"),
+                        rec.get("data_type")
                     )
                 )
                 new_id = cur.fetchone()[0]
@@ -118,15 +120,17 @@ def save_model_performance(perf_records):
 def save_predictions(pred_records):
     """
     Insert predictions into 'predictions' table. 
-    
-    Potential schema:
-        id SERIAL PK
-        prediction_date TIMESTAMP
-        forecast_horizon TEXT
-        ticker TEXT
-        predicted_value DOUBLE PRECISION
-        model_name TEXT
-        model_performance_id INT (FK to model_performance.id)
+    The table might have columns:
+      id SERIAL,
+      prediction_date TIMESTAMP,
+      forecast_horizon TEXT,
+      ticker TEXT,
+      predicted_value DOUBLE PRECISION,
+      model_name TEXT,
+      model_performance_id INT,
+      data_type TEXT,
+      actual_value DOUBLE PRECISION,
+      pct_error DOUBLE PRECISION
     """
     if not pred_records:
         return
@@ -147,9 +151,12 @@ def save_predictions(pred_records):
                 ticker,
                 predicted_value,
                 model_name,
-                model_performance_id
+                model_performance_id,
+                data_type,
+                actual_value,
+                pct_error
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         with conn.cursor() as cur:
             for rec in pred_records:
@@ -161,7 +168,10 @@ def save_predictions(pred_records):
                         rec["ticker"],
                         rec["predicted_value"],
                         rec["model_name"],
-                        rec.get("model_performance_id")
+                        rec.get("model_performance_id"),
+                        rec.get("data_type"),
+                        rec.get("actual_value"),
+                        rec.get("pct_error")
                     )
                 )
         conn.commit()
