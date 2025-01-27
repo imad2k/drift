@@ -1,57 +1,139 @@
 # stock_prediction_app/db/database.py
+
 import os
 import pg8000
 from dotenv import load_dotenv
+from datetime import datetime
 
-# Load environment variables
 load_dotenv()
 
 RDS_HOST = os.getenv('RDS_HOST')
 RDS_PORT = int(os.getenv('RDS_PORT', 5432))
 RDS_USER = os.getenv('RDS_USER')
 RDS_PASSWORD = os.getenv('RDS_PASSWORD')
-
-# Optionally, if you have a specific DB name:
 RDS_DATABASE = os.getenv('RDS_DATABASE', 'postgres')
+
 
 def test_db_connection():
     """
-    Attempts a simple SELECT 1 query to confirm that we can connect
-    to the database. Returns True if successful, False otherwise.
+    Simple test to confirm we can connect to the DB.
     """
     try:
-        connection = pg8000.connect(
+        conn = pg8000.connect(
             host=RDS_HOST,
             port=RDS_PORT,
             user=RDS_USER,
             password=RDS_PASSWORD,
             database=RDS_DATABASE
         )
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1;")
-            _ = cursor.fetchone()
-        connection.close()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1;")
+            _ = cur.fetchone()
+        conn.close()
         return True
     except Exception as e:
-        print(f"Database connection test failed: {e}")
+        print(f"[ERROR] DB connection failed: {e}")
         return False
 
 
-def save_to_rds(predictions_list):
+def save_model_performance(perf_records):
     """
-    Inserts a list of prediction dictionaries into the 'predictions' table.
-    Each dict should have columns that match your schema:
-        ticker, prediction_date, rf_prediction, gbm_prediction, xgb_prediction,
-        catboost_prediction, lightgbm_prediction, tft_prediction, ensemble_prediction,
-        mse, mae, r2_score
-    """
-    if not predictions_list:
-        print("No predictions to save.")
-        return
+    Insert one or more model performance records into 'model_performance' table.
+    Returns a list of newly inserted IDs, one per record (assuming usage of RETURNING).
     
-    connection = None
+    Table schema could be:
+        id SERIAL PK
+        model_name TEXT
+        train_window_start DATE
+        train_window_end DATE
+        r2_score DOUBLE PRECISION
+        mse DOUBLE PRECISION
+        mae DOUBLE PRECISION
+        training_date TIMESTAMP
+        ticker TEXT (optional)
+        horizon TEXT (optional)
+        window_label TEXT (optional)
+        ...
+    """
+    if not perf_records:
+        return []
+
+    inserted_ids = []
+    conn = None
     try:
-        connection = pg8000.connect(
+        conn = pg8000.connect(
+            host=RDS_HOST,
+            port=RDS_PORT,
+            user=RDS_USER,
+            password=RDS_PASSWORD,
+            database=RDS_DATABASE
+        )
+        insert_sql = """
+            INSERT INTO model_performance (
+                model_name,
+                train_window_start,
+                train_window_end,
+                r2_score,
+                mse,
+                mae,
+                training_date,
+                ticker,
+                horizon,
+                window_label
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """
+        with conn.cursor() as cur:
+            for rec in perf_records:
+                cur.execute(
+                    insert_sql,
+                    (
+                        rec.get("model_name"),
+                        rec.get("train_window_start"),
+                        rec.get("train_window_end"),
+                        rec.get("r2_score"),
+                        rec.get("mse"),
+                        rec.get("mae"),
+                        rec.get("training_date", datetime.now()),
+                        rec.get("ticker"),
+                        rec.get("horizon"),
+                        rec.get("window_label"),
+                    )
+                )
+                new_id = cur.fetchone()[0]
+                inserted_ids.append(new_id)
+        conn.commit()
+    except Exception as e:
+        print(f"[ERROR] save_model_performance: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
+    return inserted_ids
+
+
+def save_predictions(pred_records):
+    """
+    Insert predictions into 'predictions' table. 
+    
+    Potential schema:
+        id SERIAL PK
+        prediction_date TIMESTAMP
+        forecast_horizon TEXT
+        ticker TEXT
+        predicted_value DOUBLE PRECISION
+        model_name TEXT
+        model_performance_id INT (FK to model_performance.id)
+    """
+    if not pred_records:
+        return
+
+    conn = None
+    try:
+        conn = pg8000.connect(
             host=RDS_HOST,
             port=RDS_PORT,
             user=RDS_USER,
@@ -60,45 +142,33 @@ def save_to_rds(predictions_list):
         )
         insert_sql = """
             INSERT INTO predictions (
-                ticker,
                 prediction_date,
-                rf_prediction,
-                gbm_prediction,
-                xgb_prediction,
-                catboost_prediction,
-                lightgbm_prediction,
-                tft_prediction,
-                ensemble_prediction,
-                mse,
-                mae,
-                r2_score
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                forecast_horizon,
+                ticker,
+                predicted_value,
+                model_name,
+                model_performance_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
         """
-        with connection.cursor() as cursor:
-            for pred_dict in predictions_list:
-                cursor.execute(
+        with conn.cursor() as cur:
+            for rec in pred_records:
+                cur.execute(
                     insert_sql,
                     (
-                        pred_dict["ticker"],
-                        pred_dict["date"],
-                        pred_dict.get("rf_prediction"),
-                        pred_dict.get("gbm_prediction"),
-                        pred_dict.get("xgb_prediction"),
-                        pred_dict.get("catboost_prediction"),
-                        pred_dict.get("lightgbm_prediction"),
-                        pred_dict.get("tft_prediction"),            # New Prediction
-                        pred_dict.get("ensemble_prediction"),
-                        pred_dict.get("mse"),
-                        pred_dict.get("mae"),
-                        pred_dict.get("r2_score")
+                        rec["prediction_date"],
+                        rec.get("forecast_horizon"),
+                        rec["ticker"],
+                        rec["predicted_value"],
+                        rec["model_name"],
+                        rec.get("model_performance_id")
                     )
                 )
-        connection.commit()
-        print(f"Saved {len(predictions_list)} predictions to database.")
+        conn.commit()
     except Exception as e:
-        print(f"DB Insertion Error: {e}")
-        if connection:
-            connection.rollback()
+        print(f"[ERROR] save_predictions: {e}")
+        if conn:
+            conn.rollback()
     finally:
-        if connection:
-            connection.close()
+        if conn:
+            conn.close()

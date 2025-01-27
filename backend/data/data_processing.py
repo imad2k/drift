@@ -3,6 +3,9 @@
 import pandas as pd
 import numpy as np
 
+# -------------------------------------------------------------------
+# 1) process_external_data (original single-row aggregator)
+# -------------------------------------------------------------------
 def process_external_data(fundamental_data, news_sentiment, economic_events, macroeconomic_data):
     """
     Returns a single-row DataFrame containing aggregated external data
@@ -58,8 +61,6 @@ def process_external_data(fundamental_data, news_sentiment, economic_events, mac
     # -------------------
     # Macroeconomic Data
     # -------------------
-    # If you want to do advanced summarization, you could parse macro here.
-    # Right now, we just store a placeholder row.
     if macroeconomic_data:
         data["macro_data_found"] = True
     else:
@@ -68,6 +69,9 @@ def process_external_data(fundamental_data, news_sentiment, economic_events, mac
     return pd.DataFrame([data])
 
 
+# -------------------------------------------------------------------
+# 2) Intraday Aggregation (if you still use intraday)
+# -------------------------------------------------------------------
 def aggregate_intraday(intraday_df):
     """
     Aggregates intraday data by date, computing mean volume/high/low/close.
@@ -92,11 +96,17 @@ def aggregate_intraday(intraday_df):
     return grouped
 
 
+# -------------------------------------------------------------------
+# 3) process_fundamental_data
+# -------------------------------------------------------------------
 def process_fundamental_data(fundamental_json):
     """
     Processes the fundamental data JSON into a single-row DataFrame.
     """
     try:
+        if not fundamental_json or fundamental_json == 0:
+            return pd.DataFrame()
+
         highlights = fundamental_json.get("Highlights", {})
         valuation = fundamental_json.get("Valuation", {})
         shares_stats = fundamental_json.get("SharesStats", {})
@@ -177,51 +187,114 @@ def process_fundamental_data(fundamental_json):
         return pd.DataFrame()
 
 
-def process_economic_events(events, intraday_data):
+# -------------------------------------------------------------------
+# 4) process_economic_events
+# -------------------------------------------------------------------
+def process_economic_events(events, price_df):
     """
-    Merges aggregated economic events by date with intraday data (already aggregated).
+    Merges aggregated economic events by date with daily or intraday price DataFrame.
+    Expects 'date' col in price_df. 
     """
-    if not events:
-        return intraday_data
-
+    if not events or not isinstance(events, list):
+        return price_df
     events_df = pd.DataFrame(events)
-    if 'date' not in events_df.columns:
-        return intraday_data
+    if events_df.empty or "date" not in events_df.columns:
+        return price_df
 
     events_df['date'] = pd.to_datetime(events_df['date'])
+    # Example: average importance, event_count
     events_agg = events_df.groupby('date').agg({
         'importance': 'mean',
         'actual': 'count'
     }).rename(columns={'importance': 'avg_importance', 'actual': 'event_count'}).reset_index()
 
-    intraday_data['date'] = pd.to_datetime(intraday_data['date'])
-    merged_data = pd.merge(intraday_data, events_agg, on='date', how='left')
+    price_df['date'] = pd.to_datetime(price_df['date'])
+    merged_data = pd.merge(price_df, events_agg, on='date', how='left')
     merged_data['avg_importance'].fillna(0, inplace=True)
     merged_data['event_count'].fillna(0, inplace=True)
-    
     return merged_data
 
 
-def process_macroeconomic_data(macro_data, intraday_data):
+# -------------------------------------------------------------------
+# 5) process_macroeconomic_data
+# -------------------------------------------------------------------
+def process_macroeconomic_data(macro_data, price_df):
     """
-    Merges daily macro data (open/high/low/close) with daily intraday data.
+    Merges daily macro data (with date, open, high, low, close) into price_df.
     """
     macro_df = pd.DataFrame(macro_data)
-    if 'date' not in macro_df.columns:
-        # Return unmodified if no valid macro data
-        return intraday_data
+    if macro_df.empty or 'date' not in macro_df.columns:
+        return price_df
 
     macro_df['date'] = pd.to_datetime(macro_df['date'])
-    macro_df = macro_df[['date', 'open', 'high', 'low', 'close']]
-    macro_df.rename(columns={
+    # rename columns to avoid collisions
+    rename_map = {
         'open': 'macro_open',
         'high': 'macro_high',
-        'low': 'macro_low',
+        'low':  'macro_low',
         'close': 'macro_close'
-    }, inplace=True)
+    }
+    for col in rename_map:
+        if col not in macro_df.columns:
+            macro_df[col] = np.nan
+    macro_df.rename(columns=rename_map, inplace=True)
 
-    intraday_data['date'] = pd.to_datetime(intraday_data['date'])
-    merged_data = pd.merge(intraday_data, macro_df, on='date', how='left')
+    price_df['date'] = pd.to_datetime(price_df['date'])
+    merged_data = pd.merge(price_df, macro_df[['date','macro_open','macro_high','macro_low','macro_close']], 
+                           on='date', how='left')
     merged_data.fillna(0, inplace=True)
-
     return merged_data
+
+
+# -------------------------------------------------------------------
+# 6) Zero-volume & Outliers
+# -------------------------------------------------------------------
+def remove_zero_volume(df, vol_col="volume"):
+    """
+    Drop rows where volume=0 or volume is missing.
+    """
+    before = len(df)
+    df = df[df[vol_col] > 0].copy()
+    after = len(df)
+    print(f"[INFO] Removed {before - after} rows with zero-volume.")
+    return df
+
+def remove_outliers(df, cols, q_low=0.01, q_high=0.99):
+    """
+    Clips columns in `cols` to [q_low, q_high] quantiles.
+    """
+    for c in cols:
+        if c not in df.columns:
+            continue
+        low_val = df[c].quantile(q_low)
+        high_val = df[c].quantile(q_high)
+        df[c] = df[c].clip(lower=low_val, upper=high_val)
+    return df
+
+
+# -------------------------------------------------------------------
+# 7) Merge daily EOD with technical indicators
+# -------------------------------------------------------------------
+def merge_daily_and_technical(eod_list, tech_list):
+    """
+    eod_list: list of dicts with daily EOD data, e.g. {date, adjusted_close, volume, ...}
+    tech_list: list of dicts from fetch_technical_data() with columns like {date, sma, macd, ...}
+
+    Returns a merged DataFrame sorted by date ascending.
+    """
+    df_eod = pd.DataFrame(eod_list)
+    df_tech = pd.DataFrame(tech_list)
+
+    if df_eod.empty or "date" not in df_eod.columns:
+        return pd.DataFrame()
+    df_eod["date"] = pd.to_datetime(df_eod["date"])
+
+    if not df_tech.empty and "date" in df_tech.columns:
+        df_tech["date"] = pd.to_datetime(df_tech["date"])
+        merged = pd.merge(df_eod, df_tech, on="date", how="left")
+    else:
+        merged = df_eod.copy()
+
+    merged.sort_values("date", inplace=True)
+    merged.reset_index(drop=True, inplace=True)
+    return merged

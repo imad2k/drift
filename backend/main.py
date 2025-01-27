@@ -8,7 +8,7 @@ import multiprocessing as mp
 from app.routes.predict import predict_bp
 
 # Import the new TFT blueprint (assuming it's in app/routes/train_tft_route.py)
-from app.routes.train_tft_route import tft_bp
+# from app.routes.train_tft_route import tft_bp
 
 # Database connection checker
 from db.database import test_db_connection
@@ -27,7 +27,7 @@ def index():
 
 # Register blueprint(s)
 app.register_blueprint(predict_bp)     # The old /predict routes
-app.register_blueprint(tft_bp)         # The new /train_tft route
+# app.register_blueprint(tft_bp)         # The new /train_tft route
 
 # Error handler for internal server errors
 @app.errorhandler(500)
