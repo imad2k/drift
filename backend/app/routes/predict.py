@@ -41,19 +41,20 @@ EOD_API_KEY = os.getenv("EOD_API_KEY")
 
 predict_bp = Blueprint("predict", __name__)
 
-def next_trading_day(base_date):
+def add_trading_days(start_date, days_to_add):
     """
-    Returns the next date that is a weekday (Mon-Fri).
-    If base_date+1 is Sat or Sun, we skip to Monday.
-    This is a simplistic approach:
-      - If it's Friday, next day is Monday.
-      - If it's Saturday, next day is Monday.
-      - If it's Sunday, next day is Monday.
+    Adds 'days_to_add' trading days to start_date, skipping weekends.
+    E.g., if start_date is Friday and days_to_add=1, we land on Monday.
     """
-    proposed = base_date + timedelta(days=1)
-    while proposed.weekday() >= 5:  # 5=Saturday,6=Sunday
+    proposed = start_date
+    added = 0
+    while added < days_to_add:
         proposed += timedelta(days=1)
+        # Monday=0 ... Friday=4, Saturday=5, Sunday=6
+        if proposed.weekday() < 5:
+            added += 1
     return proposed
+
 
 @predict_bp.route("/predict", methods=["POST"])
 def predict_multi_windows():
@@ -65,14 +66,13 @@ def predict_multi_windows():
       4) Removes outliers & zero-volume rows
       5) Trains multiple tabular models + ensemble
       6) Saves each model's performance & final predictions
-         (including data_type, predicted_date, actual_value, pct_error).
+         (including data_type, forecast_date, actual_value, pct_error).
       7) Returns JSON summary
     """
-
     try:
         req = request.get_json()
 
-        # Required / optional fields
+        # Basic request params
         tickers = req.get("tickers", ["AAPL.US"])
         data_type = req.get("data_type", "daily")  # "daily" or "intraday"
         end_date = req.get("end_date", date.today().strftime("%Y-%m-%d"))
@@ -86,10 +86,10 @@ def predict_multi_windows():
             "3m": 90
         })
         horizons = req.get("horizons", {
-            "1d": 1,
-            "1w": 5,
-            "2w": 10,
-            "4w": 20
+            "1d": 1,   # 1 trading day
+            "2d": 2,   # 2 trading days
+            "1w": 5,   # 5 trading days
+            "2w": 10,  # etc.
         })
         buffer_days = req.get("buffer_days", 20)
 
@@ -100,16 +100,17 @@ def predict_multi_windows():
         earliest_dt = date.today() - timedelta(days=max_window_days)
         earliest_str = earliest_dt.strftime("%Y-%m-%d")
 
-        # Global fetch: events & macro
+        # Fetch global data: events & macro
         events_data = fetch_economic_events(EOD_API_KEY, earliest_str, end_date)
         macro_data  = fetch_macroeconomic_data()
 
         for ticker in tickers:
             for w_label, w_days in windows.items():
+                # Window start date for fetching data
                 w_start_dt = date.today() - timedelta(days=w_days)
                 w_start_str = w_start_dt.strftime("%Y-%m-%d")
 
-                # fetch & merge data
+                # Fetch daily or intraday data
                 if data_type == "daily":
                     eod_list = fetch_daily_eod(ticker, w_start_str, end_date, EOD_API_KEY)
                     tech_list = fetch_technical_data(
@@ -140,11 +141,12 @@ def predict_multi_windows():
                 fund_json = fetch_fundamental_data(ticker, EOD_API_KEY)
                 df_fund = process_fundamental_data(fund_json)
                 if not df_fund.empty:
+                    # Repeat fundamentals to match length of df_merged
                     df_fund_rep = pd.concat([df_fund]*len(df_merged), ignore_index=True)
                     df_fund_rep["date"] = df_merged["date"].values
                     df_merged = pd.merge(df_merged, df_fund_rep, on="date", how="left")
 
-                # Events + Macro
+                # Add events + macro
                 df_merged = process_economic_events(events_data, df_merged)
                 df_merged = process_macroeconomic_data(macro_data, df_merged)
 
@@ -184,13 +186,14 @@ def predict_multi_windows():
                     current_app.logger.warning(f"Not enough data after cleaning for {ticker}, window={w_label}")
                     continue
 
+                # For each horizon
                 for h_label, h_shift in horizons.items():
                     df_horizon = df_merged.copy()
                     if price_col not in df_horizon.columns:
                         current_app.logger.warning(f"No price col {price_col} for horizon {h_label}")
                         continue
 
-                    # SHIFT target
+                    # SHIFT target by h_shift
                     df_horizon["target"] = df_horizon[price_col].shift(-h_shift)
                     df_horizon.dropna(subset=["target"], inplace=True)
                     if df_horizon.empty:
@@ -207,7 +210,7 @@ def predict_multi_windows():
                         continue
 
                     # Train/test split
-                    split_idx = int(len(X_all)*0.8)
+                    split_idx = int(len(X_all) * 0.8)
                     X_train, X_test = X_all[:split_idx], X_all[split_idx:]
                     y_train, y_test = y_all[:split_idx], y_all[split_idx:]
 
@@ -220,49 +223,31 @@ def predict_multi_windows():
                     mae_val = float(metrics["mae"])
                     r2_val  = float(metrics["r2"])
 
-                    perf_records = []
-                    pred_records = []
-
-                    # We'll store the final test sample's actual as well
+                    # Final test sample
                     last_idx = -1
                     actual_val = float(y_test[last_idx])
 
-                    # --------------------------------------------------------
-                    # 1) Predicted date logic -> skip weekends
-                    # --------------------------------------------------------
-                    # The last known date in the test set might be something like 2025-01-24 (Friday).
-                    # So if horizon=1, we skip Sat(25) and Sun(26) to Monday(27).
-                    # We'll store that as predicted_date in predictions.
-                    # But if horizon=5 (1 week), you might want a more robust approach.
-                    # We'll keep it simple for "next day" scenario.
-
-                    # We find the last date of df_horizon. That is the date for X_test[-1].
-                    # We'll call it "base_date".
+                    # ==============
+                    # Forecast Date
+                    # ==============
                     last_row_date = df_horizon.iloc[split_idx + last_idx]["date"]
-                    if isinstance(last_row_date, str):
-                        base_date_dt = pd.to_datetime(last_row_date).date()
-                    else:
-                        base_date_dt = last_row_date
+                    # Always convert to Python date
+                    base_date_dt = pd.to_datetime(last_row_date).date()
 
-                    # For simplicity, if horizon=1, we do next_trading_day(base_date_dt).
-                    # If horizon>1, we'll just do "base_date_dt + horizon days", skipping weekends once if needed.
-                    # A fully correct approach might skip multiple weekends if horizon=10, etc.
-                    # We'll keep it minimal for demonstration.
-                    if h_shift == 1:
-                        pred_date = next_trading_day(base_date_dt)
-                    else:
-                        # naive approach: add h_shift days in a single step
-                        proposed = base_date_dt + timedelta(days=h_shift)
-                        # if it's Sat or Sun, skip forward
-                        while proposed.weekday() >= 5:
-                            proposed += timedelta(days=1)
-                        pred_date = proposed
+                    # Force base date to be at least "today"
+                    if base_date_dt < date.today():
+                        base_date_dt = date.today()
 
-                    # --------------
+                    # Now add trading days
+                    forecast_date = add_trading_days(base_date_dt, h_shift)
+
+                    # Save performance & predictions
+                    perf_records = []
+                    pred_records = []
+
                     # model-by-model
-                    # --------------
                     for m_name, model_preds in preds_dict.items():
-                        # compute custom MSE, MAE, R2
+                        # MSE, MAE, R2
                         m_mse = float(np.mean((model_preds - y_test)**2))
                         m_mae = float(np.mean(np.abs(model_preds - y_test)))
                         ss_res = np.sum((model_preds - y_test)**2)
@@ -270,9 +255,9 @@ def predict_multi_windows():
                         if abs(ss_tot) < 1e-12:
                             m_r2 = 0.0
                         else:
-                            m_r2 = float(1 - ss_res/ss_tot)
+                            m_r2 = float(1 - ss_res / ss_tot)
 
-                        # performance row
+                        # Insert model performance
                         perf_rec = {
                             "model_name": m_name,
                             "train_window_start": w_start_str,
@@ -290,14 +275,14 @@ def predict_multi_windows():
                         if perf_ids:
                             mp_id = perf_ids[0]
                             final_val = float(model_preds[last_idx])
-                            # compute % error wrt actual_val
-                            if abs(actual_val) < 1e-12:
-                                pct_err = None
-                            else:
+                            pct_err = None
+                            if abs(actual_val) > 1e-12:
                                 pct_err = 100.0*(final_val - actual_val)/actual_val
 
+                            # Insert predictions
                             pr = {
-                                "prediction_date": datetime.now(),
+                                "created_at": datetime.now(),
+                                "forecast_date": forecast_date,
                                 "forecast_horizon": h_label,
                                 "ticker": ticker,
                                 "predicted_value": final_val,
@@ -305,15 +290,13 @@ def predict_multi_windows():
                                 "model_performance_id": mp_id,
                                 "data_type": data_type,
                                 "actual_value": actual_val,
-                                "pct_error": pct_err,
-                                "predicted_date": str(pred_date)  # store as string or date
+                                "pct_error": pct_err
                             }
                             pred_records.append(pr)
 
-                    # 2) ensemble
-                    if abs(actual_val) < 1e-12:
-                        ens_pct_err = None
-                    else:
+                    # Ensemble
+                    ens_pct_err = None
+                    if abs(actual_val) > 1e-12:
                         ens_pct_err = 100.0*(ensemble_pred[last_idx] - actual_val)/actual_val
 
                     perf_ens = {
@@ -334,7 +317,8 @@ def predict_multi_windows():
                         ens_id = ens_ids[0]
                         final_ens_val = float(ensemble_pred[last_idx])
                         pred_ens = {
-                            "prediction_date": datetime.now(),
+                            "created_at": datetime.now(),
+                            "forecast_date": forecast_date,
                             "forecast_horizon": h_label,
                             "ticker": ticker,
                             "predicted_value": final_ens_val,
@@ -342,16 +326,15 @@ def predict_multi_windows():
                             "model_performance_id": ens_id,
                             "data_type": data_type,
                             "actual_value": actual_val,
-                            "pct_error": ens_pct_err,
-                            "predicted_date": str(pred_date)
+                            "pct_error": ens_pct_err
                         }
                         pred_records.append(pred_ens)
 
-                    # store predictions
+                    # store predictions in DB
                     if pred_records:
                         save_predictions(pred_records)
 
-                    # add to final_results JSON
+                    # add info to final results
                     run_info = {
                         "ticker": ticker,
                         "window": w_label,
@@ -362,7 +345,7 @@ def predict_multi_windows():
                         "final_ensemble_pred": float(ensemble_pred[last_idx]),
                         "actual_final_value": actual_val,
                         "ensemble_pct_err": ens_pct_err,
-                        "predicted_date": str(pred_date),
+                        "forecast_date": str(forecast_date),
                         "data_type": data_type
                     }
                     all_results.append(run_info)

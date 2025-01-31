@@ -39,21 +39,21 @@ def test_db_connection():
 def save_model_performance(perf_records):
     """
     Insert one or more model performance records into `model_performance`.
-    Return a list of newly inserted IDs (assuming usage of RETURNING).
+    Return list of newly inserted model_performance_id values.
     
-    The table might have columns:
-      id SERIAL,
-      model_name TEXT,
-      train_window_start DATE,
-      train_window_end DATE,
-      r2_score DOUBLE PRECISION,
-      mse DOUBLE PRECISION,
-      mae DOUBLE PRECISION,
-      training_date TIMESTAMP,
-      ticker TEXT,
-      horizon TEXT,
-      window_label TEXT,
-      data_type TEXT
+    Matches schema:
+      model_performance_id SERIAL PRIMARY KEY,
+      model_name           TEXT,
+      train_window_start   DATE,
+      train_window_end     DATE,
+      r2_score             DOUBLE PRECISION,
+      mse                  DOUBLE PRECISION,
+      mae                  DOUBLE PRECISION,
+      training_date        TIMESTAMP,
+      ticker               TEXT,
+      horizon              TEXT,
+      window_label         TEXT,
+      data_type            TEXT
     """
     if not perf_records:
         return []
@@ -83,7 +83,7 @@ def save_model_performance(perf_records):
                 data_type
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
+            RETURNING model_performance_id
         """
         with conn.cursor() as cur:
             for rec in perf_records:
@@ -119,18 +119,19 @@ def save_model_performance(perf_records):
 
 def save_predictions(pred_records):
     """
-    Insert predictions into 'predictions' table. 
-    The table might have columns:
-      id SERIAL,
-      prediction_date TIMESTAMP,
-      forecast_horizon TEXT,
-      ticker TEXT,
-      predicted_value DOUBLE PRECISION,
-      model_name TEXT,
-      model_performance_id INT,
-      data_type TEXT,
-      actual_value DOUBLE PRECISION,
-      pct_error DOUBLE PRECISION
+    Insert predictions into `predictions` table.
+    Matches schema:
+      prediction_id         SERIAL PRIMARY KEY,
+      created_at            TIMESTAMP NOT NULL,
+      forecast_date         DATE NOT NULL,
+      forecast_horizon      TEXT NOT NULL,
+      ticker                TEXT NOT NULL,
+      predicted_value       DOUBLE PRECISION NOT NULL,
+      model_name            TEXT NOT NULL,
+      model_performance_id  INT,
+      data_type             TEXT NOT NULL,
+      actual_value          DOUBLE PRECISION,
+      pct_error             DOUBLE PRECISION
     """
     if not pred_records:
         return
@@ -146,7 +147,8 @@ def save_predictions(pred_records):
         )
         insert_sql = """
             INSERT INTO predictions (
-                prediction_date,
+                created_at,
+                forecast_date,
                 forecast_horizon,
                 ticker,
                 predicted_value,
@@ -156,14 +158,15 @@ def save_predictions(pred_records):
                 actual_value,
                 pct_error
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         with conn.cursor() as cur:
             for rec in pred_records:
                 cur.execute(
                     insert_sql,
                     (
-                        rec["prediction_date"],
+                        rec["created_at"],
+                        rec["forecast_date"],       # date object or date string
                         rec.get("forecast_horizon"),
                         rec["ticker"],
                         rec["predicted_value"],
