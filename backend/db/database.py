@@ -166,7 +166,7 @@ def save_predictions(pred_records):
                     insert_sql,
                     (
                         rec["created_at"],
-                        rec["forecast_date"],       # date object or date string
+                        rec["forecast_date"],  # date object or date string
                         rec.get("forecast_horizon"),
                         rec["ticker"],
                         rec["predicted_value"],
@@ -180,6 +180,66 @@ def save_predictions(pred_records):
         conn.commit()
     except Exception as e:
         print(f"[ERROR] save_predictions: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
+
+def update_predictions_actuals(ticker, forecast_date, horizon, data_type, closing_price):
+    """
+    Update the actual_value and pct_error for any predictions that match 
+    (ticker, forecast_date, horizon, data_type) and currently have actual_value=NULL.
+
+    :param ticker: e.g. "AAPL.US"
+    :param forecast_date: e.g. "2025-01-31" or a datetime.date object
+    :param horizon: e.g. "1d", "2d", etc.
+    :param data_type: e.g. "daily" or "intraday"
+    :param closing_price: The official close price you fetched post-market
+    """
+    conn = None
+    try:
+        conn = pg8000.connect(
+            host=RDS_HOST,
+            port=RDS_PORT,
+            user=RDS_USER,
+            password=RDS_PASSWORD,
+            database=RDS_DATABASE
+        )
+
+        # If closing_price is zero, we set pct_error to NULL to avoid division by zero
+        update_sql = """
+        UPDATE predictions
+           SET actual_value = %s,
+               pct_error = CASE 
+                             WHEN %s <> 0
+                             THEN 100.0 * (predicted_value - %s) / %s
+                             ELSE NULL
+                           END
+         WHERE ticker = %s
+           AND forecast_date = %s
+           AND forecast_horizon = %s
+           AND data_type = %s
+           AND actual_value IS NULL
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                update_sql,
+                (
+                    closing_price,      # actual_value
+                    closing_price,      # for the CASE check
+                    closing_price,      # predicted_value - X
+                    closing_price,      # denominator
+                    ticker,
+                    forecast_date,
+                    horizon,
+                    data_type
+                )
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[ERROR] update_predictions_actuals: {e}")
         if conn:
             conn.rollback()
     finally:

@@ -8,6 +8,7 @@ env/
 *.so
 *.dylib
 backend/venv/
+backend/venv_py310/
 
 # Python
 *.py[cod]

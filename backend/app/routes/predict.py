@@ -56,20 +56,17 @@ def add_trading_days(start_date, days_to_add):
     return proposed
 
 
+from flask import Blueprint, jsonify, request
+from ..modules.prediction import run_predictions_for_ticker
+
+predict_bp = Blueprint("predict", __name__)
+
 @predict_bp.route("/predict", methods=["POST"])
 def predict_multi_windows():
-    """
-    An endpoint that:
-      1) Reads JSON params to decide daily vs. intraday
-      2) Loops over multiple rolling windows + horizons
-      3) Fetches & merges data
-      4) Removes outliers & zero-volume rows
-      5) Trains multiple tabular models + ensemble
-      6) Saves each model's performance & final predictions
-         (including data_type, forecast_date, actual_value, pct_error).
-      7) Returns JSON summary
-    """
+    """Route handler for predictions"""
     try:
+        # Keep route handling logic here
+        # Use run_predictions_for_ticker for core prediction logic
         req = request.get_json()
 
         # Basic request params

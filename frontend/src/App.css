@@ -1,38 +1,122 @@
-.App {
-  text-align: center;
+/* src/styles.css */
+
+/* ------------------
+   App Layout
+------------------ */
+.app-container {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+.app-header {
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+  padding: 1rem;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+.app-header a {
+  text-decoration: none;
+  color: black;
+  font-size: 1.5rem;
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+.app-main {
+  overflow-y: auto;
+}
+
+/* ------------------
+   HomePage
+------------------ */
+.home-container {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  padding: 2rem;
+}
+
+.top-picks-section {
+  margin-top: 2rem;
+}
+
+.top-picks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 1rem;
+}
+
+.top-pick-card {
+  background: #fff;
+  border: 1px solid #ddd;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  padding: 1rem;
+  border-radius: 8px;
 }
 
-.App-link {
-  color: #61dafb;
+/* ------------------
+   CompanyDetailsPage
+------------------ */
+.company-details-container {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  padding: 2rem;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.predictions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+}
+
+.prediction-card {
+  background: #f9f9f9;
+  padding: 1rem;
+  border-radius: 4px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 1rem;
+}
+
+.metric-card {
+  background: #e9e9e9;
+  padding: 1rem;
+  border-radius: 4px;
+  text-align: center;
+  font-weight: bold;
+}
+
+/* ------------------
+   Modal (AddCompanyModal)
+------------------ */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-content {
+  background: #fff;
+  padding: 2rem;
+  width: 300px;
+  border-radius: 8px;
+}
+
+.search-input {
+  width: 100%;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
 }
